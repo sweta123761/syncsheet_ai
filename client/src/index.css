@@ -367,3 +367,7 @@ button.tab.active {
   border-radius: 8px;
   margin: 0;
 }
+.grid td input.cell-error {
+  color: #b91c1c;
+  font-weight: 600;
+}

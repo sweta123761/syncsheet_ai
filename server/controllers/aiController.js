@@ -39,7 +39,8 @@ ${sample || "(empty sheet)"}
 
 User request: ${prompt}
 
-Reply with ONLY one formula that starts with "=". No explanation, no markdown, no code fences.`;
+Reply with ONLY one formula that starts with "=". No explanation, no markdown, no code fences.
+Use only basic, widely supported functions such as SUM, AVERAGE, COUNT, MIN, MAX, IF, ROUND, CONCATENATE, ABS.`;
 
     let formula = (await askGemini(aiPrompt)).trim().replace(/```/g, "").trim();
     formula = formula.split("\n")[0].trim();

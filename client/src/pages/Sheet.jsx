@@ -1,18 +1,18 @@
-
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import { Link, useParams } from "react-router-dom";
 import api from "../api/axios";
 import { useAuth } from "../context/AuthContext";
 import AIPanel from "../components/AIPanel";
- 
+import { createEvaluator } from "../utils/formulaEngine";
+
 const colLabel = (i) => String.fromCharCode(65 + i); // 0 -> A, 1 -> B ...
- 
+
 const Sheet = () => {
   const { id } = useParams();
   const { user } = useAuth();
   const socketRef = useRef(null);
- 
+
   const [sheet, setSheet] = useState(null);
   const [cells, setCells] = useState({});
   const [error, setError] = useState("");
@@ -21,7 +21,8 @@ const Sheet = () => {
   const [presence, setPresence] = useState([]);
   const [activeCell, setActiveCell] = useState(null);
   const [showAI, setShowAI] = useState(false);
- 
+  const [editingKey, setEditingKey] = useState(null);
+
   useEffect(() => {
     const fetchSheet = async () => {
       try {
@@ -37,59 +38,64 @@ const Sheet = () => {
     };
     fetchSheet();
   }, [id]);
- 
+
   useEffect(() => {
     const socket = io(import.meta.env.VITE_SOCKET_URL, {
       auth: { token: user.token },
     });
     socketRef.current = socket;
- 
+
     // connect (aur reconnect) hote hi room join karo
     socket.on("connect", () => {
       socket.emit("join-sheet", id);
     });
- 
+
     // dusre user ne cell badla
     socket.on("cell-updated", ({ key, value }) => {
       setCells((prev) => ({ ...prev, [key]: value }));
     });
- 
+
     socket.on("presence-update", (list) => setPresence(list));
     socket.on("socket-error", (message) => setError(message));
- 
+
     // cleanup: page chhodte hi connection band
     return () => {
       socket.disconnect();
     };
   }, [id, user.token]);
- 
+
+  // formulas ka result: cells badle tabhi dobara calculate hoga
+  const evaluator = useMemo(() => createEvaluator(cells), [cells]);
+
   const handleCellChange = (row, col, value) => {
     const key = `${row}-${col}`;
     setCells((prev) => ({ ...prev, [key]: value }));
     socketRef.current?.emit("cell-update", { key, value });
   };
- 
+
   const handleCellFocus = (row, col) => {
     setActiveCell({ row, col });
+    setEditingKey(`${row}-${col}`);
     socketRef.current?.emit("cell-focus", `${row}-${col}`);
   };
- 
+
   const handleCellBlur = () => {
+    setEditingKey(null);
     socketRef.current?.emit("cell-focus", null);
   };
- 
+
   const insertFormula = (formula) => {
     if (!activeCell) return;
     handleCellChange(activeCell.row, activeCell.col, formula);
   };
- 
+
   const applyChanges = (changes) => {
     changes.forEach((ch) => {
       const [row, col] = ch.key.split("-").map(Number);
       handleCellChange(row, col, ch.newValue);
     });
   };
- 
+
   const handleShare = async (e) => {
     e.preventDefault();
     setShareMsg("");
@@ -103,7 +109,7 @@ const Sheet = () => {
       setShareMsg(err.response?.data?.message || "Could not add collaborator");
     }
   };
- 
+
   if (error) {
     return (
       <div className="sheet-page">
@@ -112,9 +118,9 @@ const Sheet = () => {
       </div>
     );
   }
- 
+
   if (!sheet) return <p style={{ padding: 24 }}>Loading...</p>;
- 
+
   // same user do tabs mein ho to bhi ek hi avatar
   const onlineUsers = Object.values(
     presence.reduce((acc, p) => {
@@ -122,22 +128,22 @@ const Sheet = () => {
       return acc;
     }, {})
   );
- 
+
   // dusron ke cursors: { "2-3": { name, color, ... } }
   const remoteCells = {};
   presence.forEach((p) => {
     if (p.userId !== user._id && p.cell) remoteCells[p.cell] = p;
   });
- 
+
   const isOwner = sheet.owner._id === user._id;
- 
+
   return (
     <div className="sheet-page">
       <header className="sheet-header">
         <div>
           <Link to="/">← Back</Link>
           <h2>{sheet.title}</h2>
- 
+
           <div className="online-users">
             {onlineUsers.map((p) => (
               <span
@@ -151,12 +157,12 @@ const Sheet = () => {
             ))}
             <small>{onlineUsers.length} online</small>
           </div>
- 
+
           <button className="ai-btn" onClick={() => setShowAI((s) => !s)}>
             ✨ AI Assistant
           </button>
         </div>
- 
+
         {isOwner && (
           <form className="share-form" onSubmit={handleShare}>
             <input
@@ -171,7 +177,7 @@ const Sheet = () => {
           </form>
         )}
       </header>
- 
+
       <div className="sheet-body">
         <div className="grid-wrapper">
           <table className="grid">
@@ -190,6 +196,11 @@ const Sheet = () => {
                   {Array.from({ length: sheet.cols }, (_, c) => {
                     const key = `${r}-${c}`;
                     const remote = remoteCells[key];
+                    const display = evaluator.display(key);
+                    const isError =
+                      (cells[key] || "").startsWith("=") &&
+                      display.startsWith("#");
+
                     return (
                       <td
                         key={key}
@@ -209,12 +220,14 @@ const Sheet = () => {
                           </span>
                         )}
                         <input
-                          value={cells[key] || ""}
+                          className={isError ? "cell-error" : ""}
+                          value={editingKey === key ? cells[key] || "" : display}
                           onChange={(e) =>
                             handleCellChange(r, c, e.target.value)
                           }
                           onFocus={() => handleCellFocus(r, c)}
                           onBlur={handleCellBlur}
+                          onKeyDown={(e) => e.key === "Enter" && e.target.blur()}
                         />
                       </td>
                     );
@@ -224,7 +237,7 @@ const Sheet = () => {
             </tbody>
           </table>
         </div>
- 
+
         {showAI && (
           <AIPanel
             sheetId={id}
@@ -238,5 +251,5 @@ const Sheet = () => {
     </div>
   );
 };
- 
+
 export default Sheet;
